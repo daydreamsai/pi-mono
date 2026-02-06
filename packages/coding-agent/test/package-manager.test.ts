@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
@@ -110,6 +110,40 @@ Content`,
 
 			const result = await packageManager.resolve();
 			expect(result.prompts.some((r) => r.path === promptPath && !r.enabled)).toBe(true);
+		});
+
+		it("should resolve directory with package.json pi.extensions in extensions setting", async () => {
+			// Create a package with pi.extensions in package.json
+			const pkgDir = join(tempDir, "my-extensions-pkg");
+			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
+			writeFileSync(
+				join(pkgDir, "package.json"),
+				JSON.stringify({
+					name: "my-extensions-pkg",
+					pi: {
+						extensions: ["./extensions/clip.ts", "./extensions/cost.ts"],
+					},
+				}),
+			);
+			writeFileSync(join(pkgDir, "extensions", "clip.ts"), "export default function() {}");
+			writeFileSync(join(pkgDir, "extensions", "cost.ts"), "export default function() {}");
+			writeFileSync(join(pkgDir, "extensions", "helper.ts"), "export const x = 1;"); // Not in manifest, shouldn't be loaded
+
+			// Add the directory to extensions setting (not packages setting)
+			settingsManager.setExtensionPaths([pkgDir]);
+
+			const result = await packageManager.resolve();
+
+			// Should find the extensions declared in package.json pi.extensions
+			expect(result.extensions.some((r) => r.path === join(pkgDir, "extensions", "clip.ts") && r.enabled)).toBe(
+				true,
+			);
+			expect(result.extensions.some((r) => r.path === join(pkgDir, "extensions", "cost.ts") && r.enabled)).toBe(
+				true,
+			);
+
+			// Should NOT find helper.ts (not declared in manifest)
+			expect(result.extensions.some((r) => r.path.endsWith("helper.ts"))).toBe(false);
 		});
 	});
 
@@ -245,6 +279,174 @@ Content`,
 
 			// Should have attempted clone, not thrown unsupported error
 			expect(events.some((e) => e.type === "start" && e.action === "install")).toBe(true);
+		});
+
+		it("should parse package source types from docs examples", () => {
+			expect((packageManager as any).parseSource("npm:@scope/pkg@1.2.3").type).toBe("npm");
+			expect((packageManager as any).parseSource("npm:pkg").type).toBe("npm");
+
+			expect((packageManager as any).parseSource("git:github.com/user/repo@v1").type).toBe("git");
+			expect((packageManager as any).parseSource("https://github.com/user/repo@v1").type).toBe("git");
+			expect((packageManager as any).parseSource("git@github.com:user/repo@v1").type).toBe("git");
+			expect((packageManager as any).parseSource("ssh://git@github.com/user/repo@v1").type).toBe("git");
+
+			expect((packageManager as any).parseSource("/absolute/path/to/package").type).toBe("local");
+			expect((packageManager as any).parseSource("./relative/path/to/package").type).toBe("local");
+			expect((packageManager as any).parseSource("../relative/path/to/package").type).toBe("local");
+		});
+
+		it("should never parse dot-relative paths as git", () => {
+			const dotSlash = (packageManager as any).parseSource("./packages/agent-timers");
+			expect(dotSlash.type).toBe("local");
+			expect(dotSlash.path).toBe("./packages/agent-timers");
+
+			const dotDotSlash = (packageManager as any).parseSource("../packages/agent-timers");
+			expect(dotDotSlash.type).toBe("local");
+			expect(dotDotSlash.path).toBe("../packages/agent-timers");
+		});
+	});
+
+	describe("settings source normalization", () => {
+		it("should store global local packages relative to agent settings base", () => {
+			const pkgDir = join(tempDir, "packages", "local-global-pkg");
+			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
+			writeFileSync(join(pkgDir, "extensions", "index.ts"), "export default function() {}");
+
+			const added = packageManager.addSourceToSettings("./packages/local-global-pkg");
+			expect(added).toBe(true);
+
+			const settings = settingsManager.getGlobalSettings();
+			expect(settings.packages?.[0]).toBe(relative(agentDir, pkgDir) || ".");
+		});
+
+		it("should store project local packages relative to .pi settings base", () => {
+			const projectPkgDir = join(tempDir, "project-local-pkg");
+			mkdirSync(join(projectPkgDir, "extensions"), { recursive: true });
+			writeFileSync(join(projectPkgDir, "extensions", "index.ts"), "export default function() {}");
+
+			const added = packageManager.addSourceToSettings("./project-local-pkg", { local: true });
+			expect(added).toBe(true);
+
+			const settings = settingsManager.getProjectSettings();
+			expect(settings.packages?.[0]).toBe(relative(join(tempDir, ".pi"), projectPkgDir) || ".");
+		});
+
+		it("should remove local package entries using equivalent path forms", () => {
+			const pkgDir = join(tempDir, "remove-local-pkg");
+			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
+			writeFileSync(join(pkgDir, "extensions", "index.ts"), "export default function() {}");
+
+			packageManager.addSourceToSettings("./remove-local-pkg");
+			const removed = packageManager.removeSourceFromSettings(`${pkgDir}/`);
+			expect(removed).toBe(true);
+			expect(settingsManager.getGlobalSettings().packages ?? []).toHaveLength(0);
+		});
+	});
+
+	describe("HTTPS git URL parsing (old behavior)", () => {
+		it("should parse HTTPS GitHub URLs correctly", async () => {
+			const parsed = (packageManager as any).parseSource("https://github.com/user/repo");
+			expect(parsed.type).toBe("git");
+			expect(parsed.host).toBe("github.com");
+			expect(parsed.path).toBe("user/repo");
+			expect(parsed.pinned).toBe(false);
+		});
+
+		it("should parse HTTPS URLs with git: prefix", async () => {
+			const parsed = (packageManager as any).parseSource("git:https://github.com/user/repo");
+			expect(parsed.type).toBe("git");
+			expect(parsed.host).toBe("github.com");
+			expect(parsed.path).toBe("user/repo");
+		});
+
+		it("should parse HTTPS URLs with ref", async () => {
+			const parsed = (packageManager as any).parseSource("https://github.com/user/repo@v1.2.3");
+			expect(parsed.type).toBe("git");
+			expect(parsed.host).toBe("github.com");
+			expect(parsed.path).toBe("user/repo");
+			expect(parsed.ref).toBe("v1.2.3");
+			expect(parsed.pinned).toBe(true);
+		});
+
+		it("should parse HTTPS URLs without protocol", async () => {
+			const parsed = (packageManager as any).parseSource("github.com/user/repo");
+			expect(parsed.type).toBe("git");
+			expect(parsed.host).toBe("github.com");
+			expect(parsed.path).toBe("user/repo");
+		});
+
+		it("should parse HTTPS URLs with .git suffix", async () => {
+			const parsed = (packageManager as any).parseSource("https://github.com/user/repo.git");
+			expect(parsed.type).toBe("git");
+			expect(parsed.host).toBe("github.com");
+			expect(parsed.path).toBe("user/repo");
+		});
+
+		it("should parse GitLab HTTPS URLs", async () => {
+			const parsed = (packageManager as any).parseSource("https://gitlab.com/user/repo");
+			expect(parsed.type).toBe("git");
+			expect(parsed.host).toBe("gitlab.com");
+			expect(parsed.path).toBe("user/repo");
+		});
+
+		it("should parse Bitbucket HTTPS URLs", async () => {
+			const parsed = (packageManager as any).parseSource("https://bitbucket.org/user/repo");
+			expect(parsed.type).toBe("git");
+			expect(parsed.host).toBe("bitbucket.org");
+			expect(parsed.path).toBe("user/repo");
+		});
+
+		it("should parse Codeberg HTTPS URLs", async () => {
+			const parsed = (packageManager as any).parseSource("https://codeberg.org/user/repo");
+			expect(parsed.type).toBe("git");
+			expect(parsed.host).toBe("codeberg.org");
+			expect(parsed.path).toBe("user/repo");
+		});
+
+		it("should generate correct package identity for HTTPS URLs", async () => {
+			const identity1 = (packageManager as any).getPackageIdentity("https://github.com/user/repo");
+			const identity2 = (packageManager as any).getPackageIdentity("https://github.com/user/repo@v1.0.0");
+			const identity3 = (packageManager as any).getPackageIdentity("github.com/user/repo");
+			const identity4 = (packageManager as any).getPackageIdentity("https://github.com/user/repo.git");
+
+			// All should have the same identity (normalized)
+			expect(identity1).toBe("git:github.com/user/repo");
+			expect(identity2).toBe("git:github.com/user/repo");
+			expect(identity3).toBe("git:github.com/user/repo");
+			expect(identity4).toBe("git:github.com/user/repo");
+		});
+
+		it("should deduplicate HTTPS URLs with different formats", async () => {
+			const pkgDir = join(tempDir, "https-dedup-pkg");
+			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
+			writeFileSync(join(pkgDir, "extensions", "test.ts"), "export default function() {}");
+
+			// Mock the package as if it were cloned from different URL formats
+			// In reality, these would all point to the same local dir after install
+			settingsManager.setPackages([
+				"https://github.com/user/repo",
+				"github.com/user/repo",
+				"https://github.com/user/repo.git",
+			]);
+
+			// Since these URLs don't actually exist and we can't clone them,
+			// we verify they produce the same identity
+			const id1 = (packageManager as any).getPackageIdentity("https://github.com/user/repo");
+			const id2 = (packageManager as any).getPackageIdentity("github.com/user/repo");
+			const id3 = (packageManager as any).getPackageIdentity("https://github.com/user/repo.git");
+
+			expect(id1).toBe(id2);
+			expect(id2).toBe(id3);
+		});
+
+		it("should handle HTTPS URLs with refs in resolve", async () => {
+			// This tests that the ref is properly extracted and stored
+			const parsed = (packageManager as any).parseSource("https://github.com/user/repo@main");
+			expect(parsed.ref).toBe("main");
+			expect(parsed.pinned).toBe(true);
+
+			const parsed2 = (packageManager as any).parseSource("https://github.com/user/repo@feature/branch");
+			expect(parsed2.ref).toBe("feature/branch");
 		});
 	});
 
@@ -708,6 +910,78 @@ Content`,
 			const result = await packageManager.resolve();
 			expect(result.extensions.some((r) => r.path.includes("pkg1"))).toBe(true);
 			expect(result.extensions.some((r) => r.path.includes("pkg2"))).toBe(true);
+		});
+
+		it("should dedupe SSH and HTTPS URLs for same repo", async () => {
+			// Same repository, different URL formats
+			const httpsUrl = "https://github.com/user/repo";
+			const sshUrl = "git@github.com:user/repo";
+
+			const httpsIdentity = (packageManager as any).getPackageIdentity(httpsUrl);
+			const sshIdentity = (packageManager as any).getPackageIdentity(sshUrl);
+
+			// Both should resolve to the same identity
+			expect(httpsIdentity).toBe("git:github.com/user/repo");
+			expect(sshIdentity).toBe("git:github.com/user/repo");
+			expect(httpsIdentity).toBe(sshIdentity);
+		});
+
+		it("should dedupe SSH and HTTPS with refs", async () => {
+			const httpsUrl = "https://github.com/user/repo@v1.0.0";
+			const sshUrl = "git@github.com:user/repo@v1.0.0";
+
+			const httpsIdentity = (packageManager as any).getPackageIdentity(httpsUrl);
+			const sshIdentity = (packageManager as any).getPackageIdentity(sshUrl);
+
+			// Identity should ignore ref (version)
+			expect(httpsIdentity).toBe("git:github.com/user/repo");
+			expect(sshIdentity).toBe("git:github.com/user/repo");
+			expect(httpsIdentity).toBe(sshIdentity);
+		});
+
+		it("should dedupe SSH URL with ssh:// protocol and git@ format", async () => {
+			const sshProtocol = "ssh://git@github.com/user/repo";
+			const gitAt = "git@github.com:user/repo";
+
+			const sshProtocolIdentity = (packageManager as any).getPackageIdentity(sshProtocol);
+			const gitAtIdentity = (packageManager as any).getPackageIdentity(gitAt);
+
+			// Both SSH formats should resolve to same identity
+			expect(sshProtocolIdentity).toBe("git:github.com/user/repo");
+			expect(gitAtIdentity).toBe("git:github.com/user/repo");
+			expect(sshProtocolIdentity).toBe(gitAtIdentity);
+		});
+
+		it("should dedupe all URL formats for same repo (HTTPS, SSH, git@)", async () => {
+			const urls = [
+				"https://github.com/user/repo",
+				"github.com/user/repo",
+				"https://github.com/user/repo.git",
+				"git@github.com:user/repo",
+				"git@github.com:user/repo.git",
+				"ssh://git@github.com/user/repo",
+				"git:https://github.com/user/repo",
+			];
+
+			const identities = urls.map((url) => (packageManager as any).getPackageIdentity(url));
+
+			// All should produce the same identity
+			const uniqueIdentities = [...new Set(identities)];
+			expect(uniqueIdentities.length).toBe(1);
+			expect(uniqueIdentities[0]).toBe("git:github.com/user/repo");
+		});
+
+		it("should keep different repos separate (HTTPS vs SSH)", async () => {
+			const repo1Https = "https://github.com/user/repo1";
+			const repo2Ssh = "git@github.com:user/repo2";
+
+			const id1 = (packageManager as any).getPackageIdentity(repo1Https);
+			const id2 = (packageManager as any).getPackageIdentity(repo2Ssh);
+
+			// Different repos should have different identities
+			expect(id1).toBe("git:github.com/user/repo1");
+			expect(id2).toBe("git:github.com/user/repo2");
+			expect(id1).not.toBe(id2);
 		});
 	});
 

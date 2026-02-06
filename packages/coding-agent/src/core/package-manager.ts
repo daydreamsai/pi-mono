@@ -6,7 +6,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { CONFIG_DIR_NAME } from "../config.js";
-import { looksLikeGitUrl } from "../utils/git.js";
+import { type GitSource, parseGitUrl } from "../utils/git.js";
 import type { PackageSource, SettingsManager } from "./settings-manager.js";
 
 export interface PathMetadata {
@@ -49,6 +49,8 @@ export interface PackageManager {
 		sources: string[],
 		options?: { local?: boolean; temporary?: boolean },
 	): Promise<ResolvedPaths>;
+	addSourceToSettings(source: string, options?: { local?: boolean }): boolean;
+	removeSourceFromSettings(source: string, options?: { local?: boolean }): boolean;
 	setProgressCallback(callback: ProgressCallback | undefined): void;
 	getInstalledPath(source: string, scope: "user" | "project"): string | undefined;
 }
@@ -65,15 +67,6 @@ type NpmSource = {
 	type: "npm";
 	spec: string;
 	name: string;
-	pinned: boolean;
-};
-
-type GitSource = {
-	type: "git";
-	repo: string;
-	host: string;
-	path: string;
-	ref?: string;
 	pinned: boolean;
 };
 
@@ -411,6 +404,13 @@ function collectAutoExtensionEntries(dir: string): string[] {
 	const entries: string[] = [];
 	if (!existsSync(dir)) return entries;
 
+	// First check if this directory itself has explicit extension entries (package.json or index)
+	const rootEntries = resolveExtensionEntries(dir);
+	if (rootEntries) {
+		return rootEntries;
+	}
+
+	// Otherwise, discover extensions from directory contents
 	const ig = ignore();
 	addIgnoreRules(ig, dir, dir);
 
@@ -604,6 +604,43 @@ export class DefaultPackageManager implements PackageManager {
 
 	setProgressCallback(callback: ProgressCallback | undefined): void {
 		this.progressCallback = callback;
+	}
+
+	addSourceToSettings(source: string, options?: { local?: boolean }): boolean {
+		const scope: SourceScope = options?.local ? "project" : "user";
+		const currentSettings =
+			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
+		const currentPackages = currentSettings.packages ?? [];
+		const normalizedSource = this.normalizePackageSourceForSettings(source, scope);
+		const exists = currentPackages.some((existing) => this.packageSourcesMatch(existing, source, scope));
+		if (exists) {
+			return false;
+		}
+		const nextPackages = [...currentPackages, normalizedSource];
+		if (scope === "project") {
+			this.settingsManager.setProjectPackages(nextPackages);
+		} else {
+			this.settingsManager.setPackages(nextPackages);
+		}
+		return true;
+	}
+
+	removeSourceFromSettings(source: string, options?: { local?: boolean }): boolean {
+		const scope: SourceScope = options?.local ? "project" : "user";
+		const currentSettings =
+			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
+		const currentPackages = currentSettings.packages ?? [];
+		const nextPackages = currentPackages.filter((existing) => !this.packageSourcesMatch(existing, source, scope));
+		const changed = nextPackages.length !== currentPackages.length;
+		if (!changed) {
+			return false;
+		}
+		if (scope === "project") {
+			this.settingsManager.setProjectPackages(nextPackages);
+		} else {
+			this.settingsManager.setPackages(nextPackages);
+		}
+		return true;
 	}
 
 	getInstalledPath(source: string, scope: "user" | "project"): string | undefined {
@@ -882,6 +919,50 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
+	private getPackageSourceString(pkg: PackageSource): string {
+		return typeof pkg === "string" ? pkg : pkg.source;
+	}
+
+	private getSourceMatchKeyForInput(source: string): string {
+		const parsed = this.parseSource(source);
+		if (parsed.type === "npm") {
+			return `npm:${parsed.name}`;
+		}
+		if (parsed.type === "git") {
+			return `git:${parsed.host}/${parsed.path}`;
+		}
+		return `local:${this.resolvePath(parsed.path)}`;
+	}
+
+	private getSourceMatchKeyForSettings(source: string, scope: SourceScope): string {
+		const parsed = this.parseSource(source);
+		if (parsed.type === "npm") {
+			return `npm:${parsed.name}`;
+		}
+		if (parsed.type === "git") {
+			return `git:${parsed.host}/${parsed.path}`;
+		}
+		const baseDir = this.getBaseDirForScope(scope);
+		return `local:${this.resolvePathFromBase(parsed.path, baseDir)}`;
+	}
+
+	private packageSourcesMatch(existing: PackageSource, inputSource: string, scope: SourceScope): boolean {
+		const left = this.getSourceMatchKeyForSettings(this.getPackageSourceString(existing), scope);
+		const right = this.getSourceMatchKeyForInput(inputSource);
+		return left === right;
+	}
+
+	private normalizePackageSourceForSettings(source: string, scope: SourceScope): string {
+		const parsed = this.parseSource(source);
+		if (parsed.type !== "local") {
+			return source;
+		}
+		const baseDir = this.getBaseDirForScope(scope);
+		const resolved = this.resolvePath(parsed.path);
+		const rel = relative(baseDir, resolved);
+		return rel || ".";
+	}
+
 	private parseSource(source: string): ParsedSource {
 		if (source.startsWith("npm:")) {
 			const spec = source.slice("npm:".length).trim();
@@ -894,21 +975,23 @@ export class DefaultPackageManager implements PackageManager {
 			};
 		}
 
-		if (source.startsWith("git:") || looksLikeGitUrl(source)) {
-			const repoSpec = source.startsWith("git:") ? source.slice("git:".length).trim() : source;
-			const [repo, ref] = repoSpec.split("@");
-			const normalized = repo.replace(/^https?:\/\//, "").replace(/\.git$/, "");
-			const parts = normalized.split("/");
-			const host = parts.shift() ?? "";
-			const repoPath = parts.join("/");
-			return {
-				type: "git",
-				repo: normalized,
-				host,
-				path: repoPath,
-				ref,
-				pinned: Boolean(ref),
-			};
+		const trimmed = source.trim();
+		const isWindowsAbsolutePath = /^[A-Za-z]:[\\/]|^\\\\/.test(trimmed);
+		const isLocalPathLike =
+			trimmed.startsWith("./") ||
+			trimmed.startsWith("../") ||
+			trimmed.startsWith("/") ||
+			trimmed === "~" ||
+			trimmed.startsWith("~/") ||
+			isWindowsAbsolutePath;
+		if (isLocalPathLike) {
+			return { type: "local", path: source };
+		}
+
+		// Try parsing as git URL
+		const gitParsed = parseGitUrl(source);
+		if (gitParsed) {
+			return gitParsed;
 		}
 
 		return { type: "local", path: source };
@@ -961,6 +1044,8 @@ export class DefaultPackageManager implements PackageManager {
 	/**
 	 * Get a unique identity for a package, ignoring version/ref.
 	 * Used to detect when the same package is in both global and project settings.
+	 * For git packages, uses normalized host/path to ensure SSH and HTTPS URLs
+	 * for the same repository are treated as identical.
 	 */
 	private getPackageIdentity(source: string, scope?: SourceScope): string {
 		const parsed = this.parseSource(source);
@@ -968,7 +1053,8 @@ export class DefaultPackageManager implements PackageManager {
 			return `npm:${parsed.name}`;
 		}
 		if (parsed.type === "git") {
-			return `git:${parsed.repo}`;
+			// Use host/path for identity to normalize SSH and HTTPS
+			return `git:${parsed.host}/${parsed.path}`;
 		}
 		if (scope) {
 			const baseDir = this.getBaseDirForScope(scope);
@@ -1046,8 +1132,8 @@ export class DefaultPackageManager implements PackageManager {
 			this.ensureGitIgnore(gitRoot);
 		}
 		mkdirSync(dirname(targetDir), { recursive: true });
-		const cloneUrl = source.repo.startsWith("http") ? source.repo : `https://${source.repo}`;
-		await this.runCommand("git", ["clone", cloneUrl, targetDir]);
+
+		await this.runCommand("git", ["clone", source.repo, targetDir]);
 		if (source.ref) {
 			await this.runCommand("git", ["checkout", source.ref], { cwd: targetDir });
 		}

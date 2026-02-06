@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-coding-agent",
-	"version": "0.51.6",
+	"version": "0.52.5",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -40,15 +40,16 @@
 	},
 	"dependencies": {
 		"@mariozechner/jiti": "^2.6.2",
-		"@mariozechner/pi-agent-core": "^0.51.6",
-		"@mariozechner/pi-ai": "^0.51.6",
-		"@mariozechner/pi-tui": "^0.51.6",
+		"@mariozechner/pi-agent-core": "^0.52.5",
+		"@mariozechner/pi-ai": "^0.52.5",
+		"@mariozechner/pi-tui": "^0.52.5",
 		"@silvia-odwyer/photon-node": "^0.3.4",
 		"chalk": "^5.5.0",
 		"cli-highlight": "^2.1.11",
 		"diff": "^8.0.2",
 		"file-type": "^21.1.1",
 		"glob": "^13.0.1",
+		"hosted-git-info": "^9.0.2",
 		"ignore": "^7.0.5",
 		"marked": "^15.0.12",
 		"minimatch": "^10.1.1",
@@ -66,6 +67,7 @@
 	},
 	"devDependencies": {
 		"@types/diff": "^7.0.2",
+		"@types/hosted-git-info": "^3.0.5",
 		"@types/ms": "^2.1.0",
 		"@types/node": "^24.3.0",
 		"@types/proper-lockfile": "^4.1.4",

@@ -60,12 +60,32 @@ npm:pkg
 ```
 git:github.com/user/repo@v1
 https://github.com/user/repo@v1
+git@github.com:user/repo@v1
+ssh://git@github.com/user/repo@v1
 ```
 
+- HTTPS and SSH URLs are both supported.
+- SSH URLs use your configured SSH keys automatically (respects `~/.ssh/config`).
+- For non-interactive runs (for example CI), you can set `GIT_TERMINAL_PROMPT=0` to disable credential prompts and set `GIT_SSH_COMMAND` (for example `ssh -o BatchMode=yes -o ConnectTimeout=5`) to fail fast.
 - Raw `https://` URLs work without the `git:` prefix.
 - Refs pin the package and skip `pi update`.
 - Cloned to `~/.pi/agent/git/<host>/<path>` (global) or `.pi/git/<host>/<path>` (project).
 - Runs `npm install` after clone or pull if `package.json` exists.
+
+**SSH examples:**
+```bash
+# Standard git@host:path format
+pi install git@github.com:user/repo
+
+# With git: prefix
+pi install git:git@github.com:user/repo
+
+# ssh:// protocol format
+pi install ssh://git@github.com/user/repo
+
+# With version ref
+pi install git@github.com:user/repo@v1.0.0
+```
 
 ### Local Paths
 

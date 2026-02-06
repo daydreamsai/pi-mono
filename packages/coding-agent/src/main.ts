@@ -5,8 +5,6 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
-import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
 import { type ImageContent, modelsAreEqual, supportsXhigh } from "@mariozechner/pi-ai";
 import chalk from "chalk";
 import { createInterface } from "readline";
@@ -15,7 +13,7 @@ import { selectConfig } from "./cli/config-selector.js";
 import { processFileArguments } from "./cli/file-processor.js";
 import { listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
-import { CONFIG_DIR_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
+import { getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { DEFAULT_THINKING_LEVEL } from "./core/defaults.js";
 import { exportFromFile } from "./core/export-html/index.js";
@@ -27,7 +25,7 @@ import { DefaultPackageManager } from "./core/package-manager.js";
 import { DefaultResourceLoader } from "./core/resource-loader.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
 import { SessionManager } from "./core/session-manager.js";
-import { type PackageSource, SettingsManager } from "./core/settings-manager.js";
+import { SettingsManager } from "./core/settings-manager.js";
 import { printTimings, time } from "./core/timings.js";
 import { allTools } from "./core/tools/index.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
@@ -84,120 +82,6 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	return { command, source: sources[0], local };
 }
 
-function expandTildePath(input: string): string {
-	const trimmed = input.trim();
-	if (trimmed === "~") return homedir();
-	if (trimmed.startsWith("~/")) return resolve(homedir(), trimmed.slice(2));
-	if (trimmed.startsWith("~")) return resolve(homedir(), trimmed.slice(1));
-	return trimmed;
-}
-
-function resolveLocalSourceFromInput(source: string, cwd: string): string {
-	const expanded = expandTildePath(source);
-	return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
-}
-
-function resolveLocalSourceFromSettings(source: string, baseDir: string): string {
-	const expanded = expandTildePath(source);
-	return isAbsolute(expanded) ? expanded : resolve(baseDir, expanded);
-}
-
-function normalizeLocalSourceForSettings(source: string, baseDir: string, cwd: string): string {
-	const resolved = resolveLocalSourceFromInput(source, cwd);
-	const rel = relative(baseDir, resolved);
-	return rel || ".";
-}
-
-function normalizePackageSourceForSettings(source: string, baseDir: string, cwd: string): string {
-	const normalized = normalizeExtensionSource(source);
-	if (normalized.type !== "local") {
-		return source;
-	}
-	return normalizeLocalSourceForSettings(source, baseDir, cwd);
-}
-
-function normalizeExtensionSource(source: string): { type: "npm" | "git" | "local"; key: string } {
-	if (source.startsWith("npm:")) {
-		const spec = source.slice("npm:".length).trim();
-		const match = spec.match(/^(@?[^@]+(?:\/[^@]+)?)(?:@.+)?$/);
-		return { type: "npm", key: match?.[1] ?? spec };
-	}
-	if (source.startsWith("git:")) {
-		const repo = source.slice("git:".length).trim().split("@")[0] ?? "";
-		return { type: "git", key: repo.replace(/^https?:\/\//, "").replace(/\.git$/, "") };
-	}
-	// Raw git URLs
-	if (source.startsWith("https://") || source.startsWith("http://")) {
-		const repo = source.split("@")[0] ?? "";
-		return { type: "git", key: repo.replace(/^https?:\/\//, "").replace(/\.git$/, "") };
-	}
-	return { type: "local", key: source };
-}
-
-function normalizeSourceForInput(source: string, cwd: string): { type: "npm" | "git" | "local"; key: string } {
-	const normalized = normalizeExtensionSource(source);
-	if (normalized.type !== "local") {
-		return normalized;
-	}
-	return { type: "local", key: resolveLocalSourceFromInput(source, cwd) };
-}
-
-function normalizeSourceForSettings(source: string, baseDir: string): { type: "npm" | "git" | "local"; key: string } {
-	const normalized = normalizeExtensionSource(source);
-	if (normalized.type !== "local") {
-		return normalized;
-	}
-	return { type: "local", key: resolveLocalSourceFromSettings(source, baseDir) };
-}
-
-function sourcesMatch(a: string, b: string, baseDir: string, cwd: string): boolean {
-	const left = normalizeSourceForSettings(a, baseDir);
-	const right = normalizeSourceForInput(b, cwd);
-	return left.type === right.type && left.key === right.key;
-}
-
-function getPackageSourceString(pkg: PackageSource): string {
-	return typeof pkg === "string" ? pkg : pkg.source;
-}
-
-function packageSourcesMatch(a: PackageSource, b: string, baseDir: string, cwd: string): boolean {
-	const aSource = getPackageSourceString(a);
-	return sourcesMatch(aSource, b, baseDir, cwd);
-}
-
-function updatePackageSources(
-	settingsManager: SettingsManager,
-	source: string,
-	local: boolean,
-	cwd: string,
-	agentDir: string,
-	action: "add" | "remove",
-): boolean {
-	const currentSettings = local ? settingsManager.getProjectSettings() : settingsManager.getGlobalSettings();
-	const currentPackages = currentSettings.packages ?? [];
-	const baseDir = local ? join(cwd, CONFIG_DIR_NAME) : agentDir;
-	const normalizedSource = normalizePackageSourceForSettings(source, baseDir, cwd);
-
-	let nextPackages: PackageSource[];
-	let changed = false;
-	if (action === "add") {
-		const exists = currentPackages.some((existing) => packageSourcesMatch(existing, source, baseDir, cwd));
-		nextPackages = exists ? currentPackages : [...currentPackages, normalizedSource];
-		changed = !exists;
-	} else {
-		nextPackages = currentPackages.filter((existing) => !packageSourcesMatch(existing, source, baseDir, cwd));
-		changed = nextPackages.length !== currentPackages.length;
-	}
-
-	if (local) {
-		settingsManager.setProjectPackages(nextPackages);
-	} else {
-		settingsManager.setPackages(nextPackages);
-	}
-
-	return changed;
-}
-
 async function handlePackageCommand(args: string[]): Promise<boolean> {
 	const options = parsePackageCommand(args);
 	if (!options) {
@@ -224,7 +108,7 @@ async function handlePackageCommand(args: string[]): Promise<boolean> {
 			process.exit(1);
 		}
 		await packageManager.install(options.source, { local: options.local });
-		updatePackageSources(settingsManager, options.source, options.local, cwd, agentDir, "add");
+		packageManager.addSourceToSettings(options.source, { local: options.local });
 		console.log(chalk.green(`Installed ${options.source}`));
 		return true;
 	}
@@ -235,7 +119,7 @@ async function handlePackageCommand(args: string[]): Promise<boolean> {
 			process.exit(1);
 		}
 		await packageManager.remove(options.source, { local: options.local });
-		const removed = updatePackageSources(settingsManager, options.source, options.local, cwd, agentDir, "remove");
+		const removed = packageManager.removeSourceFromSettings(options.source, { local: options.local });
 		if (!removed) {
 			console.error(chalk.red(`No matching package found for ${options.source}`));
 			process.exit(1);
@@ -580,18 +464,18 @@ export async function main(args: string[]) {
 
 	if (parsed.version) {
 		console.log(VERSION);
-		return;
+		process.exit(0);
 	}
 
 	if (parsed.help) {
 		printHelp();
-		return;
+		process.exit(0);
 	}
 
 	if (parsed.listModels !== undefined) {
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await listModels(modelRegistry, searchPattern);
-		return;
+		process.exit(0);
 	}
 
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
@@ -606,16 +490,17 @@ export async function main(args: string[]) {
 	}
 
 	if (parsed.export) {
+		let result: string;
 		try {
 			const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
-			const result = await exportFromFile(parsed.export, outputPath);
-			console.log(`Exported to: ${result}`);
-			return;
+			result = await exportFromFile(parsed.export, outputPath);
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : "Failed to export session";
 			console.error(chalk.red(`Error: ${message}`));
 			process.exit(1);
 		}
+		console.log(`Exported to: ${result}`);
+		process.exit(0);
 	}
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
