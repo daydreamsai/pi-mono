@@ -11,14 +11,14 @@ This extension registers an `x402` provider in Pi with:
 
 ```bash
 X402_PRIVATE_KEY=0x... \
-X402_ROUTER_URL=http://localhost:8080 \
+X402_ROUTER_URL=https://ai.xgate.run \
 pi -e ./packages/coding-agent/examples/extensions/custom-provider-x402
 ```
 
 ## Environment Variables
 
 - `X402_PRIVATE_KEY` (required): wallet private key format validation
-- `X402_ROUTER_URL` (optional): defaults to `http://localhost:8080`
+- `X402_ROUTER_URL` (optional): defaults to `https://ai.xgate.run`
 - `X402_NETWORK` (optional): defaults to `eip155:8453`
 - `X402_PERMIT_CAP` (optional): defaults to `10000000` (base units)
 - `X402_PAYMENT_HEADER` (optional): defaults to `PAYMENT-SIGNATURE`

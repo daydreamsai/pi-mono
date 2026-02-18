@@ -3,7 +3,7 @@ import type { X402EnvConfig } from "./types.js";
 const PRIVATE_KEY_REGEX = /^0[xX][0-9a-fA-F]{64}$/;
 const POSITIVE_INTEGER_REGEX = /^[1-9][0-9]*$/;
 
-const DEFAULT_ROUTER_URL = "http://localhost:8080";
+const DEFAULT_ROUTER_URL = "https://ai.xgate.run";
 const DEFAULT_NETWORK = "eip155:8453";
 const DEFAULT_PERMIT_CAP = "10000000";
 const DEFAULT_PAYMENT_HEADER = "PAYMENT-SIGNATURE";

@@ -118,7 +118,7 @@ See [docs/providers.md](docs/providers.md) for detailed setup instructions.
 
 ```bash
 X402_PRIVATE_KEY=0x... \
-X402_ROUTER_URL=http://localhost:8080 \
+X402_ROUTER_URL=https://ai.xgate.run \
 pi -e ./examples/extensions/custom-provider-x402 --provider x402 --model kimi-k2.5
 ```
 

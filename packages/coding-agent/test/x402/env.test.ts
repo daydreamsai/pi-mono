@@ -10,7 +10,7 @@ describe("x402 env", () => {
 		});
 
 		expect(config.privateKey).toBe(VALID_PRIVATE_KEY);
-		expect(config.routerUrl).toBe("http://localhost:8080");
+		expect(config.routerUrl).toBe("https://ai.xgate.run");
 		expect(config.network).toBe("eip155:8453");
 		expect(config.permitCap).toBe("10000000");
 		expect(config.paymentHeader).toBe("PAYMENT-SIGNATURE");

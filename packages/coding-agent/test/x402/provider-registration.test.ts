@@ -21,7 +21,7 @@ describe("x402 provider registration", () => {
 		expect(registerProvider).toHaveBeenCalledWith(
 			"x402",
 			expect.objectContaining({
-				baseUrl: "http://localhost:8080/v1",
+				baseUrl: "https://ai.xgate.run/v1",
 				api: "x402-openai-completions",
 				streamSimple: expect.any(Function),
 				models: [
