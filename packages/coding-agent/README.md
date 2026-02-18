@@ -114,6 +114,16 @@ See [docs/providers.md](docs/providers.md) for detailed setup instructions.
 
 **Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
 
+**x402 provider (extension example):** Load the bundled x402 extension and start pi with the x402 model.
+
+```bash
+X402_PRIVATE_KEY=0x... \
+X402_ROUTER_URL=http://localhost:8080 \
+pi -e ./examples/extensions/custom-provider-x402 --provider x402 --model kimi-k2.5
+```
+
+`X402_PRIVATE_KEY` is required. `X402_ROUTER_URL` is optional. The extension handles payment signing; `X402_PAYMENT_SIGNATURE` is only needed if you want to force a static signature header. The default x402 model is `kimi-k2.5`.
+
 ---
 
 ## Interactive Mode

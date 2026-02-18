@@ -7,8 +7,8 @@ const DEFAULT_ROUTER_URL = "http://localhost:8080";
 const DEFAULT_NETWORK = "eip155:8453";
 const DEFAULT_PERMIT_CAP = "10000000";
 const DEFAULT_PAYMENT_HEADER = "PAYMENT-SIGNATURE";
-const DEFAULT_MODEL_ID = "x402/gpt-4.1-mini";
-const DEFAULT_MODEL_NAME = "x402 GPT-4.1 Mini";
+const DEFAULT_MODEL_ID = "kimi-k2.5";
+const DEFAULT_MODEL_NAME = "Kimi K2.5";
 
 export type EnvSource = Record<string, string | undefined>;
 

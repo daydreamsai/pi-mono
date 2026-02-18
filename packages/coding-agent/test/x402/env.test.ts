@@ -14,8 +14,8 @@ describe("x402 env", () => {
 		expect(config.network).toBe("eip155:8453");
 		expect(config.permitCap).toBe("10000000");
 		expect(config.paymentHeader).toBe("PAYMENT-SIGNATURE");
-		expect(config.modelId).toBe("x402/gpt-4.1-mini");
-		expect(config.modelName).toBe("x402 GPT-4.1 Mini");
+		expect(config.modelId).toBe("kimi-k2.5");
+		expect(config.modelName).toBe("Kimi K2.5");
 	});
 
 	test("throws when private key is missing", () => {

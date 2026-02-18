@@ -26,8 +26,8 @@ describe("x402 provider registration", () => {
 				streamSimple: expect.any(Function),
 				models: [
 					expect.objectContaining({
-						id: "x402/gpt-4.1-mini",
-						name: "x402 GPT-4.1 Mini",
+						id: "kimi-k2.5",
+						name: "Kimi K2.5",
 					}),
 				],
 				headers: {
