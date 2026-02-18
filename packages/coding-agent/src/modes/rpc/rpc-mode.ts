@@ -144,6 +144,11 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 			} as RpcExtensionUIRequest);
 		},
 
+		onTerminalInput(): () => void {
+			// Raw terminal input not supported in RPC mode
+			return () => {};
+		},
+
 		setStatus(key: string, text: string | undefined): void {
 			// Fire and forget - no response needed
 			output({
@@ -195,6 +200,11 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 		async custom() {
 			// Custom UI not supported in RPC mode
 			return undefined as never;
+		},
+
+		pasteToEditor(text: string): void {
+			// Paste handling not supported in RPC mode - falls back to setEditorText
+			this.setEditorText(text);
 		},
 
 		setEditorText(text: string): void {
@@ -289,6 +299,9 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 			switchSession: async (sessionPath) => {
 				const success = await session.switchSession(sessionPath);
 				return { cancelled: !success };
+			},
+			reload: async () => {
+				await session.reload();
 			},
 		},
 		shutdownHandler: () => {

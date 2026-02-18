@@ -11,6 +11,7 @@ import {
 	streamSimple,
 	type TextContent,
 	type ThinkingBudgets,
+	type Transport,
 } from "@mariozechner/pi-ai";
 import { agentLoop, agentLoopContinue } from "./agent-loop.js";
 import type {
@@ -79,6 +80,11 @@ export interface AgentOptions {
 	thinkingBudgets?: ThinkingBudgets;
 
 	/**
+	 * Preferred transport for providers that support multiple transports.
+	 */
+	transport?: Transport;
+
+	/**
 	 * Maximum delay in milliseconds to wait for a retry when the server requests a long wait.
 	 * If the server's requested delay exceeds this value, the request fails immediately,
 	 * allowing higher-level retry logic to handle it with user visibility.
@@ -114,6 +120,7 @@ export class Agent {
 	private runningPrompt?: Promise<void>;
 	private resolveRunningPrompt?: () => void;
 	private _thinkingBudgets?: ThinkingBudgets;
+	private _transport: Transport;
 	private _maxRetryDelayMs?: number;
 
 	constructor(opts: AgentOptions = {}) {
@@ -126,6 +133,7 @@ export class Agent {
 		this._sessionId = opts.sessionId;
 		this.getApiKey = opts.getApiKey;
 		this._thinkingBudgets = opts.thinkingBudgets;
+		this._transport = opts.transport ?? "sse";
 		this._maxRetryDelayMs = opts.maxRetryDelayMs;
 	}
 
@@ -156,6 +164,20 @@ export class Agent {
 	 */
 	set thinkingBudgets(value: ThinkingBudgets | undefined) {
 		this._thinkingBudgets = value;
+	}
+
+	/**
+	 * Get the current preferred transport.
+	 */
+	get transport(): Transport {
+		return this._transport;
+	}
+
+	/**
+	 * Set the preferred transport.
+	 */
+	setTransport(value: Transport) {
+		this._transport = value;
 	}
 
 	/**
@@ -252,6 +274,40 @@ export class Agent {
 		this.followUpQueue = [];
 	}
 
+	hasQueuedMessages(): boolean {
+		return this.steeringQueue.length > 0 || this.followUpQueue.length > 0;
+	}
+
+	private dequeueSteeringMessages(): AgentMessage[] {
+		if (this.steeringMode === "one-at-a-time") {
+			if (this.steeringQueue.length > 0) {
+				const first = this.steeringQueue[0];
+				this.steeringQueue = this.steeringQueue.slice(1);
+				return [first];
+			}
+			return [];
+		}
+
+		const steering = this.steeringQueue.slice();
+		this.steeringQueue = [];
+		return steering;
+	}
+
+	private dequeueFollowUpMessages(): AgentMessage[] {
+		if (this.followUpMode === "one-at-a-time") {
+			if (this.followUpQueue.length > 0) {
+				const first = this.followUpQueue[0];
+				this.followUpQueue = this.followUpQueue.slice(1);
+				return [first];
+			}
+			return [];
+		}
+
+		const followUp = this.followUpQueue.slice();
+		this.followUpQueue = [];
+		return followUp;
+	}
+
 	clearMessages() {
 		this._state.messages = [];
 	}
@@ -310,7 +366,9 @@ export class Agent {
 		await this._runLoop(msgs);
 	}
 
-	/** Continue from current context (for retry after overflow) */
+	/**
+	 * Continue from current context (used for retries and resuming queued messages).
+	 */
 	async continue() {
 		if (this._state.isStreaming) {
 			throw new Error("Agent is already processing. Wait for completion before continuing.");
@@ -321,6 +379,18 @@ export class Agent {
 			throw new Error("No messages to continue from");
 		}
 		if (messages[messages.length - 1].role === "assistant") {
+			const queuedSteering = this.dequeueSteeringMessages();
+			if (queuedSteering.length > 0) {
+				await this._runLoop(queuedSteering, { skipInitialSteeringPoll: true });
+				return;
+			}
+
+			const queuedFollowUp = this.dequeueFollowUpMessages();
+			if (queuedFollowUp.length > 0) {
+				await this._runLoop(queuedFollowUp);
+				return;
+			}
+
 			throw new Error("Cannot continue from message role: assistant");
 		}
 
@@ -332,7 +402,7 @@ export class Agent {
 	 * If messages are provided, starts a new conversation turn with those messages.
 	 * Otherwise, continues from existing context.
 	 */
-	private async _runLoop(messages?: AgentMessage[]) {
+	private async _runLoop(messages?: AgentMessage[], options?: { skipInitialSteeringPoll?: boolean }) {
 		const model = this._state.model;
 		if (!model) throw new Error("No model configured");
 
@@ -353,43 +423,26 @@ export class Agent {
 			tools: this._state.tools,
 		};
 
+		let skipInitialSteeringPoll = options?.skipInitialSteeringPoll === true;
+
 		const config: AgentLoopConfig = {
 			model,
 			reasoning,
 			sessionId: this._sessionId,
+			transport: this._transport,
 			thinkingBudgets: this._thinkingBudgets,
 			maxRetryDelayMs: this._maxRetryDelayMs,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
 			getSteeringMessages: async () => {
-				if (this.steeringMode === "one-at-a-time") {
-					if (this.steeringQueue.length > 0) {
-						const first = this.steeringQueue[0];
-						this.steeringQueue = this.steeringQueue.slice(1);
-						return [first];
-					}
+				if (skipInitialSteeringPoll) {
+					skipInitialSteeringPoll = false;
 					return [];
-				} else {
-					const steering = this.steeringQueue.slice();
-					this.steeringQueue = [];
-					return steering;
 				}
+				return this.dequeueSteeringMessages();
 			},
-			getFollowUpMessages: async () => {
-				if (this.followUpMode === "one-at-a-time") {
-					if (this.followUpQueue.length > 0) {
-						const first = this.followUpQueue[0];
-						this.followUpQueue = this.followUpQueue.slice(1);
-						return [first];
-					}
-					return [];
-				} else {
-					const followUp = this.followUpQueue.slice();
-					this.followUpQueue = [];
-					return followUp;
-				}
-			},
+			getFollowUpMessages: async () => this.dequeueFollowUpMessages(),
 		};
 
 		let partial: AgentMessage | null = null;

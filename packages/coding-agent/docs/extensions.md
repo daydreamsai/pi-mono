@@ -237,6 +237,7 @@ user sends prompt ────────────────────�
   ├─► (skill/template expansion if not handled)            │
   ├─► before_agent_start (can inject message, modify system prompt)
   ├─► agent_start                                          │
+  ├─► message_start / message_update / message_end         │
   │                                                        │
   │   ┌─── turn (repeats while LLM calls tools) ───┐       │
   │   │                                            │       │
@@ -245,7 +246,9 @@ user sends prompt ────────────────────�
   │   │                                            │       │
   │   │   LLM responds, may call tools:            │       │
   │   │     ├─► tool_call (can block)              │       │
-  │   │     │   tool executes                      │       │
+  │   │     ├─► tool_execution_start               │       │
+  │   │     ├─► tool_execution_update              │       │
+  │   │     ├─► tool_execution_end                 │       │
   │   │     └─► tool_result (can modify)           │       │
   │   │                                            │       │
   │   └─► turn_end                                 │       │
@@ -434,6 +437,46 @@ pi.on("turn_end", async (event, ctx) => {
 });
 ```
 
+#### message_start / message_update / message_end
+
+Fired for message lifecycle updates.
+
+- `message_start` and `message_end` fire for user, assistant, and toolResult messages.
+- `message_update` fires for assistant streaming updates.
+
+```typescript
+pi.on("message_start", async (event, ctx) => {
+  // event.message
+});
+
+pi.on("message_update", async (event, ctx) => {
+  // event.message
+  // event.assistantMessageEvent (token-by-token stream event)
+});
+
+pi.on("message_end", async (event, ctx) => {
+  // event.message
+});
+```
+
+#### tool_execution_start / tool_execution_update / tool_execution_end
+
+Fired for tool execution lifecycle updates.
+
+```typescript
+pi.on("tool_execution_start", async (event, ctx) => {
+  // event.toolCallId, event.toolName, event.args
+});
+
+pi.on("tool_execution_update", async (event, ctx) => {
+  // event.toolCallId, event.toolName, event.args, event.partialResult
+});
+
+pi.on("tool_execution_end", async (event, ctx) => {
+  // event.toolCallId, event.toolName, event.result, event.isError
+});
+```
+
 #### context
 
 Fired before each LLM call. Modify messages non-destructively. See [session.md](session.md) for message types.
@@ -523,6 +566,11 @@ pi.on("tool_call", (event) => {
 #### tool_result
 
 Fired after tool executes. **Can modify result.**
+
+`tool_result` handlers chain like middleware:
+- Handlers run in extension load order
+- Each handler sees the latest result after previous handler changes
+- Handlers can return partial patches (`content`, `details`, or `isError`); omitted fields keep their current values
 
 ```typescript
 import { isBashToolResult } from "@mariozechner/pi-coding-agent";
@@ -618,7 +666,7 @@ UI methods for user interaction. See [Custom UI](#custom-ui) for full details.
 
 ### ctx.hasUI
 
-`false` in print mode (`-p`), JSON mode, and RPC mode. Always check before using `ctx.ui`.
+`false` in print mode (`-p`) and JSON mode. `true` in interactive and RPC mode. In RPC mode, dialog methods (`select`, `confirm`, `input`, `editor`) work via the extension UI sub-protocol, and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) emit requests to the client. Some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
 
 ### ctx.cwd
 
@@ -765,6 +813,62 @@ Options:
 - `customInstructions`: Custom instructions for the summarizer
 - `replaceInstructions`: If true, `customInstructions` replaces the default prompt instead of being appended
 - `label`: Label to attach to the branch summary entry (or target entry if not summarizing)
+
+### ctx.reload()
+
+Run the same reload flow as `/reload`.
+
+```typescript
+pi.registerCommand("reload-runtime", {
+  description: "Reload extensions, skills, prompts, and themes",
+  handler: async (_args, ctx) => {
+    await ctx.reload();
+    return;
+  },
+});
+```
+
+Important behavior:
+- `await ctx.reload()` emits `session_shutdown` for the current extension runtime
+- It then reloads resources and emits `session_start` (and `resources_discover` with reason `"reload"`) for the new runtime
+- The currently running command handler still continues in the old call frame
+- Code after `await ctx.reload()` still runs from the pre-reload version
+- Code after `await ctx.reload()` must not assume old in-memory extension state is still valid
+- After the handler returns, future commands/events/tool calls use the new extension version
+
+For predictable behavior, treat reload as terminal for that handler (`await ctx.reload(); return;`).
+
+Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. Use a command as the reload entrypoint, then expose a tool that queues that command as a follow-up user message.
+
+Example tool the LLM can call to trigger reload:
+
+```typescript
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerCommand("reload-runtime", {
+    description: "Reload extensions, skills, prompts, and themes",
+    handler: async (_args, ctx) => {
+      await ctx.reload();
+      return;
+    },
+  });
+
+  pi.registerTool({
+    name: "reload_runtime",
+    label: "Reload Runtime",
+    description: "Reload extensions, skills, prompts, and themes",
+    parameters: Type.Object({}),
+    async execute() {
+      pi.sendUserMessage("/reload-runtime", { deliverAs: "followUp" });
+      return {
+        content: [{ type: "text", text: "Queued /reload-runtime as a follow-up command." }],
+      };
+    },
+  });
+}
+```
 
 ## ExtensionAPI Methods
 
@@ -1551,6 +1655,9 @@ ctx.ui.setTitle("pi - my-project");
 ctx.ui.setEditorText("Prefill text");
 const current = ctx.ui.getEditorText();
 
+// Paste into editor (triggers paste handling, including collapse for large content)
+ctx.ui.pasteToEditor("pasted content");
+
 // Tool output expansion
 const wasExpanded = ctx.ui.getToolsExpanded();
 ctx.ui.setToolsExpanded(true);
@@ -1770,6 +1877,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `handoff.ts` | Cross-provider model handoff | `registerCommand`, `ui.editor`, `ui.custom` |
 | `qna.ts` | Q&A with custom UI | `registerCommand`, `ui.custom`, `setEditorText` |
 | `send-user-message.ts` | Inject user messages | `registerCommand`, `sendUserMessage` |
+| `reload-runtime.ts` | Reload command and LLM tool handoff | `registerCommand`, `ctx.reload()`, `sendUserMessage` |
 | `shutdown-command.ts` | Graceful shutdown command | `registerCommand`, `shutdown()` |
 | **Events & Gates** |||
 | `permission-gate.ts` | Block dangerous commands | `on("tool_call")`, `ui.confirm` |

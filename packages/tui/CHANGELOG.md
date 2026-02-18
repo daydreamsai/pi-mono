@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-02-17
+
+## [0.52.12] - 2026-02-13
+
+## [0.52.11] - 2026-02-13
+
+## [0.52.10] - 2026-02-12
+
+### Added
+
+- Added terminal input listeners in `TUI` (`addInputListener` and `removeInputListener`) to let callers intercept, transform, or consume raw input before component handling.
+
+### Fixed
+
+- Fixed `@` autocomplete fuzzy matching to score against path segments and prefixes, reducing irrelevant matches for nested paths ([#1423](https://github.com/badlogic/pi-mono/issues/1423))
+
+## [0.52.9] - 2026-02-08
+
+## [0.52.8] - 2026-02-07
+
+### Added
+
+- Added `pasteToEditor` to `EditorComponent` API for programmatic paste support ([#1351](https://github.com/badlogic/pi-mono/pull/1351) by [@kaofelix](https://github.com/kaofelix))
+- Added kill ring (ctrl+k/ctrl+y/alt+y) and undo (ctrl+z) support to the Input component ([#1373](https://github.com/badlogic/pi-mono/pull/1373) by [@Perlence](https://github.com/Perlence))
+
+## [0.52.7] - 2026-02-06
+
+## [0.52.6] - 2026-02-05
+
 ## [0.52.5] - 2026-02-05
 
 ## [0.52.4] - 2026-02-05

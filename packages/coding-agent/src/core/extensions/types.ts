@@ -16,6 +16,7 @@ import type {
 } from "@mariozechner/pi-agent-core";
 import type {
 	Api,
+	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
 	ImageContent,
@@ -96,6 +97,9 @@ export interface ExtensionWidgetOptions {
 	placement?: WidgetPlacement;
 }
 
+/** Raw terminal input listener for extensions. */
+export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -112,6 +116,9 @@ export interface ExtensionUIContext {
 
 	/** Show a notification to the user. */
 	notify(message: string, type?: "info" | "warning" | "error"): void;
+
+	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
+	onTerminalInput(handler: TerminalInputHandler): () => void;
 
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
@@ -161,6 +168,9 @@ export interface ExtensionUIContext {
 			onHandle?: (handle: OverlayHandle) => void;
 		},
 	): Promise<T>;
+
+	/** Paste text into the editor, triggering paste handling (collapse for large content). */
+	pasteToEditor(text: string): void;
 
 	/** Set the text in the core input editor. */
 	setEditorText(text: string): void;
@@ -232,12 +242,11 @@ export interface ExtensionUIContext {
 // ============================================================================
 
 export interface ContextUsage {
-	tokens: number;
+	/** Estimated context tokens, or null if unknown (e.g. right after compaction, before next LLM response). */
+	tokens: number | null;
 	contextWindow: number;
-	percent: number;
-	usageTokens: number;
-	trailingTokens: number;
-	lastUsageIndex: number | null;
+	/** Context usage as percentage of context window, or null if tokens is unknown. */
+	percent: number | null;
 }
 
 export interface CompactOptions {
@@ -303,6 +312,9 @@ export interface ExtensionCommandContext extends ExtensionContext {
 
 	/** Switch to a different session file. */
 	switchSession(sessionPath: string): Promise<{ cancelled: boolean }>;
+
+	/** Reload extensions, skills, prompts, and themes. */
+	reload(): Promise<void>;
 }
 
 // ============================================================================
@@ -505,6 +517,51 @@ export interface TurnEndEvent {
 	turnIndex: number;
 	message: AgentMessage;
 	toolResults: ToolResultMessage[];
+}
+
+/** Fired when a message starts (user, assistant, or toolResult) */
+export interface MessageStartEvent {
+	type: "message_start";
+	message: AgentMessage;
+}
+
+/** Fired during assistant message streaming with token-by-token updates */
+export interface MessageUpdateEvent {
+	type: "message_update";
+	message: AgentMessage;
+	assistantMessageEvent: AssistantMessageEvent;
+}
+
+/** Fired when a message ends */
+export interface MessageEndEvent {
+	type: "message_end";
+	message: AgentMessage;
+}
+
+/** Fired when a tool starts executing */
+export interface ToolExecutionStartEvent {
+	type: "tool_execution_start";
+	toolCallId: string;
+	toolName: string;
+	args: any;
+}
+
+/** Fired during tool execution with partial/streaming output */
+export interface ToolExecutionUpdateEvent {
+	type: "tool_execution_update";
+	toolCallId: string;
+	toolName: string;
+	args: any;
+	partialResult: any;
+}
+
+/** Fired when a tool finishes executing */
+export interface ToolExecutionEndEvent {
+	type: "tool_execution_end";
+	toolCallId: string;
+	toolName: string;
+	result: any;
+	isError: boolean;
 }
 
 // ============================================================================
@@ -747,6 +804,12 @@ export type ExtensionEvent =
 	| AgentEndEvent
 	| TurnStartEvent
 	| TurnEndEvent
+	| MessageStartEvent
+	| MessageUpdateEvent
+	| MessageEndEvent
+	| ToolExecutionStartEvent
+	| ToolExecutionUpdateEvent
+	| ToolExecutionEndEvent
 	| ModelSelectEvent
 	| UserBashEvent
 	| InputEvent
@@ -878,6 +941,12 @@ export interface ExtensionAPI {
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
+	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
+	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): void;
+	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent>): void;
+	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): void;
+	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
+	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
@@ -1153,8 +1222,8 @@ export type GetSessionNameHandler = () => string | undefined;
 
 export type GetActiveToolsHandler = () => string[];
 
-/** Tool info with name and description */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description">;
+/** Tool info with name, description, and parameter schema */
+export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters">;
 
 export type GetAllToolsHandler = () => ToolInfo[];
 
@@ -1231,6 +1300,7 @@ export interface ExtensionCommandContextActions {
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 	) => Promise<{ cancelled: boolean }>;
 	switchSession: (sessionPath: string) => Promise<{ cancelled: boolean }>;
+	reload: () => Promise<void>;
 }
 
 /**
