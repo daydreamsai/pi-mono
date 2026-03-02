@@ -58,15 +58,6 @@ export interface BedrockOptions extends StreamOptions {
 }
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
-type MutableBedrockRuntimeClientConfig = BedrockRuntimeClientConfig & {
-	region?: string;
-	profile?: string;
-	credentials?: {
-		accessKeyId: string;
-		secretAccessKey: string;
-	};
-	requestHandler?: unknown;
-};
 
 export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -96,7 +87,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 
 		const blocks = output.content as Block[];
 
-		const config: MutableBedrockRuntimeClientConfig = {
+		const config: BedrockRuntimeClientConfig = {
 			region: options.region,
 			profile: options.profile,
 		};
