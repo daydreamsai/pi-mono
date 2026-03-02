@@ -221,6 +221,7 @@ export class InteractiveMode {
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
+	private extensionTerminalInputUnsubscribers = new Set<() => void>();
 
 	// Extension widgets (components rendered above/below the editor)
 	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
@@ -571,10 +572,12 @@ export class InteractiveMode {
 	 * Check npm registry for a newer version.
 	 */
 	private async checkForNewVersion(): Promise<string | undefined> {
-		if (process.env.PI_SKIP_VERSION_CHECK) return undefined;
+		if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
 
 		try {
-			const response = await fetch("https://registry.npmjs.org/@mariozechner/pi-coding-agent/latest");
+			const response = await fetch("https://registry.npmjs.org/@mariozechner/pi-coding-agent/latest", {
+				signal: AbortSignal.timeout(10000),
+			});
 			if (!response.ok) return undefined;
 
 			const data = (await response.json()) as { version?: string };
@@ -728,7 +731,7 @@ export class InteractiveMode {
 			}
 		}
 
-		return [groups.user, groups.project, groups.path].filter(
+		return [groups.project, groups.user, groups.path].filter(
 			(group) => group.paths.length > 0 || group.packages.size > 0,
 		);
 	}
@@ -1237,6 +1240,7 @@ export class InteractiveMode {
 			this.hideExtensionEditor();
 		}
 		this.ui.hideOverlay();
+		this.clearExtensionTerminalInputListeners();
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
@@ -1359,6 +1363,24 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private addExtensionTerminalInputListener(
+		handler: (data: string) => { consume?: boolean; data?: string } | undefined,
+	): () => void {
+		const unsubscribe = this.ui.addInputListener(handler);
+		this.extensionTerminalInputUnsubscribers.add(unsubscribe);
+		return () => {
+			unsubscribe();
+			this.extensionTerminalInputUnsubscribers.delete(unsubscribe);
+		};
+	}
+
+	private clearExtensionTerminalInputListeners(): void {
+		for (const unsubscribe of this.extensionTerminalInputUnsubscribers) {
+			unsubscribe();
+		}
+		this.extensionTerminalInputUnsubscribers.clear();
+	}
+
 	/**
 	 * Create the ExtensionUIContext for extensions.
 	 */
@@ -1368,6 +1390,7 @@ export class InteractiveMode {
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
+			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				if (this.loadingAnimation) {
@@ -1406,6 +1429,9 @@ export class InteractiveMode {
 				}
 				const result = setTheme(themeOrName, true);
 				if (result.success) {
+					if (this.settingsManager.getTheme() !== themeOrName) {
+						this.settingsManager.setTheme(themeOrName);
+					}
 					this.ui.requestRender();
 				}
 				return result;
@@ -2586,8 +2612,14 @@ export class InteractiveMode {
 	}
 
 	private handleCtrlZ(): void {
+		// Ignore SIGINT while suspended so Ctrl+C in the terminal does not
+		// kill the backgrounded process. The handler is removed on resume.
+		const ignoreSigint = () => {};
+		process.on("SIGINT", ignoreSigint);
+
 		// Set up handler to restore TUI when resumed
 		process.once("SIGCONT", () => {
+			process.removeListener("SIGINT", ignoreSigint);
 			this.ui.start();
 			this.ui.requestRender(true);
 		});
@@ -3013,6 +3045,7 @@ export class InteractiveMode {
 					enableSkillCommands: this.settingsManager.getEnableSkillCommands(),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
+					transport: this.settingsManager.getTransport(),
 					thinkingLevel: this.session.thinkingLevel,
 					availableThinkingLevels: this.session.getAvailableThinkingLevels(),
 					currentTheme: this.settingsManager.getTheme() || "dark",
@@ -3054,6 +3087,10 @@ export class InteractiveMode {
 					},
 					onFollowUpModeChange: (mode) => {
 						this.session.setFollowUpMode(mode);
+					},
+					onTransportChange: (transport) => {
+						this.settingsManager.setTransport(transport);
+						this.session.agent.setTransport(transport);
 					},
 					onThinkingLevelChange: (level) => {
 						this.session.setThinkingLevel(level);
@@ -4351,6 +4388,7 @@ export class InteractiveMode {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = undefined;
 		}
+		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {
