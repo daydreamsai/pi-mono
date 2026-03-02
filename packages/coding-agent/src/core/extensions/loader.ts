@@ -60,7 +60,7 @@ function getAliases(): Record<string, string> {
 	const packageIndex = path.resolve(__dirname, "../..", "index.js");
 
 	const typeboxEntry = require.resolve("@sinclair/typebox");
-	const typeboxRoot = typeboxEntry.replace(/\/build\/cjs\/index\.js$/, "");
+	const typeboxRoot = typeboxEntry.replace(/[\\/]build[\\/]cjs[\\/]index\.js$/, "");
 
 	_aliases = {
 		"@mariozechner/pi-coding-agent": packageIndex,
@@ -109,7 +109,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
 	};
 
-	return {
+	const runtime: ExtensionRuntime = {
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
@@ -125,7 +125,17 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setThinkingLevel: notInitialized,
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
+		// Pre-bind: queue registrations so bindCore() can flush them once the
+		// model registry is available. bindCore() replaces both with direct calls.
+		registerProvider: (name, config) => {
+			runtime.pendingProviderRegistrations.push({ name, config });
+		},
+		unregisterProvider: (name) => {
+			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
+		},
 	};
+
+	return runtime;
 }
 
 /**
@@ -173,7 +183,7 @@ function createExtensionAPI(
 			options: { description?: string; type: "boolean" | "string"; default?: boolean | string },
 		): void {
 			extension.flags.set(name, { name, extensionPath: extension.path, ...options });
-			if (options.default !== undefined) {
+			if (options.default !== undefined && !runtime.flagValues.has(name)) {
 				runtime.flagValues.set(name, options.default);
 			}
 		},
@@ -246,7 +256,11 @@ function createExtensionAPI(
 		},
 
 		registerProvider(name: string, config: ProviderConfig) {
-			runtime.pendingProviderRegistrations.push({ name, config });
+			runtime.registerProvider(name, config);
+		},
+
+		unregisterProvider(name: string) {
+			runtime.unregisterProvider(name);
 		},
 
 		events: eventBus,
@@ -486,13 +500,13 @@ export async function discoverAndLoadExtensions(
 		}
 	};
 
-	// 1. Global extensions: agentDir/extensions/
-	const globalExtDir = path.join(agentDir, "extensions");
-	addPaths(discoverExtensionsInDir(globalExtDir));
-
-	// 2. Project-local extensions: cwd/.pi/extensions/
+	// 1. Project-local extensions: cwd/.pi/extensions/
 	const localExtDir = path.join(cwd, ".pi", "extensions");
 	addPaths(discoverExtensionsInDir(localExtDir));
+
+	// 2. Global extensions: agentDir/extensions/
+	const globalExtDir = path.join(agentDir, "extensions");
+	addPaths(discoverExtensionsInDir(globalExtDir));
 
 	// 3. Explicitly configured paths
 	for (const p of configuredPaths) {

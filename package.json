@@ -45,10 +45,12 @@
 	"dependencies": {
 		"@mariozechner/jiti": "^2.6.5",
 		"@mariozechner/pi-coding-agent": "^0.30.2",
-		"get-east-asian-width": "^1.4.0"
+		"get-east-asian-width": "^1.4.0",
+		"koffi": "^2.15.1"
 	},
 	"overrides": {
 		"rimraf": "6.1.2",
+		"fast-xml-parser": "5.3.8",
 		"gaxios": {
 			"rimraf": "6.1.2"
 		}

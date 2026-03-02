@@ -2,6 +2,161 @@
 
 ## [Unreleased]
 
+## [0.55.3] - 2026-02-27
+
+### Fixed
+
+- Changed the default image paste keybinding on Windows to `alt+v` to avoid `ctrl+v` conflicts with terminal paste behavior ([#1682](https://github.com/badlogic/pi-mono/pull/1682) by [@mrexodia](https://github.com/mrexodia)).
+
+## [0.55.2] - 2026-02-27
+
+### New Features
+
+- Extensions can dynamically remove custom providers via `pi.unregisterProvider(name)`, restoring any built-in models that were overridden, without requiring `/reload` ([docs](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/custom-provider.md)).
+- `pi.registerProvider()` now takes effect immediately when called outside the initial extension load phase (e.g. from a command handler), removing the need for `/reload` after late registrations.
+
+### Added
+
+- `pi.unregisterProvider(name)` removes a dynamically registered provider and its models from the registry without requiring `/reload`. Built-in models that were overridden by the provider are restored ([#1669](https://github.com/badlogic/pi-mono/pull/1669) by [@aliou](https://github.com/aliou)).
+
+### Fixed
+
+- `pi.registerProvider()` now takes effect immediately when called after the initial extension load phase (e.g. from a command handler). Previously the registration sat in a pending queue that was never flushed until the next `/reload` ([#1669](https://github.com/badlogic/pi-mono/pull/1669) by [@aliou](https://github.com/aliou)).
+- Fixed duplicate session headers when forking from a point before any assistant message. `createBranchedSession` now defers file creation to `_persist()` when the branched path has no assistant message, matching the `newSession()` contract ([#1672](https://github.com/badlogic/pi-mono/pull/1672) by [@w-winter](https://github.com/w-winter)).
+- Fixed SIGINT being delivered to pi while the process is suspended (e.g. via `ctrl+z`), which could corrupt terminal state on resume ([#1668](https://github.com/badlogic/pi-mono/pull/1668) by [@aliou](https://github.com/aliou)).
+- Fixed Z.ai thinking control using wrong parameter name, causing thinking to always be enabled and wasting tokens/latency ([#1674](https://github.com/badlogic/pi-mono/pull/1674) by [@okuyam2y](https://github.com/okuyam2y))
+- Fixed `redacted_thinking` blocks being silently dropped during Anthropic streaming, and related issues with interleaved-thinking beta headers and temperature being sent alongside extended thinking ([#1665](https://github.com/badlogic/pi-mono/pull/1665) by [@tctev](https://github.com/tctev))
+- Fixed `(external, cli)` user-agent flag causing 401 errors on Anthropic setup-token endpoint ([#1677](https://github.com/badlogic/pi-mono/pull/1677) by [@LazerLance777](https://github.com/LazerLance777))
+- Fixed crash when OpenAI-compatible provider returns a chunk with no `choices` array ([#1671](https://github.com/badlogic/pi-mono/issues/1671))
+
+## [0.55.1] - 2026-02-26
+
+### New Features
+
+- Added offline startup mode via `--offline` (or `PI_OFFLINE`) to disable startup network operations, with startup network timeouts to avoid hangs in restricted or offline environments.
+- Added `gemini-3.1-pro-preview` model support to the `google-gemini-cli` provider ([#1599](https://github.com/badlogic/pi-mono/pull/1599) by [@audichuang](https://github.com/audichuang)).
+
+### Fixed
+
+- Fixed offline startup hangs by adding offline startup behavior and network timeouts during managed tool setup ([#1631](https://github.com/badlogic/pi-mono/pull/1631) by [@mcollina](https://github.com/mcollina))
+- Fixed Windows VT input initialization in ESM by loading koffi via createRequire, avoiding runtime and bundling issues in end-user environments ([#1627](https://github.com/badlogic/pi-mono/pull/1627) by [@kaste](https://github.com/kaste))
+- Fixed managed `fd`/`rg` bootstrap on Windows in Git Bash by using `extract-zip` for `.zip` archives, searching extracted layouts more robustly, and isolating extraction temp directories to avoid concurrent download races ([#1348](https://github.com/badlogic/pi-mono/issues/1348))
+- Fixed extension loading on Windows when resolving `@sinclair/typebox` aliases so subpath imports like `@sinclair/typebox/compiler` resolve correctly.
+- Fixed adaptive thinking for Claude Sonnet 4.6 in Anthropic and Bedrock providers, and clamped unsupported `xhigh` effort values to supported levels ([#1548](https://github.com/badlogic/pi-mono/pull/1548) by [@tctev](https://github.com/tctev))
+- Fixed Vertex ADC credential detection race by avoiding caching a false negative during async import initialization ([#1550](https://github.com/badlogic/pi-mono/pull/1550) by [@jeremiahgaylord-web](https://github.com/jeremiahgaylord-web))
+- Fixed subagent extension example to resolve user agents from the configured agent directory instead of hardcoded paths ([#1559](https://github.com/badlogic/pi-mono/pull/1559) by [@tianshuwang](https://github.com/tianshuwang))
+
+## [0.55.0] - 2026-02-24
+
+### Breaking Changes
+
+- Resource precedence for extensions, skills, prompts, themes, and slash-command name collisions is now project-first (`cwd/.pi`) before user-global (`~/.pi/agent`). If you relied on global resources overriding project resources with the same names, rename or reorder your resources.
+- Extension registration conflicts no longer unload the entire later extension. All extensions stay loaded, and conflicting command/tool/flag names are resolved by first registration in load order.
+
+## [0.54.2] - 2026-02-23
+
+### Fixed
+
+- Fixed `.pi` folder being created unnecessarily when only reading settings. The folder is now only created when writing project-specific settings.
+- Fixed extension-driven runtime theme changes to persist in settings so `/settings` reflects the active `currentTheme` after `ctx.ui.setTheme(...)` ([#1483](https://github.com/badlogic/pi-mono/pull/1483) by [@ferologics](https://github.com/ferologics))
+- Fixed interactive mode freezes during large streaming `write` tool calls by using incremental syntax highlighting while partial arguments stream, with a final full re-highlight after tool-call arguments complete.
+
+## [0.54.1] - 2026-02-22
+
+### Fixed
+
+- Externalized koffi from bun binary builds, reducing archive sizes by ~15MB per platform (e.g. darwin-arm64: 43MB -> 28MB). Koffi's Windows-only `.node` file is now shipped alongside the Windows binary only.
+
+## [0.54.0] - 2026-02-19
+
+### Added
+
+- Added default skill auto-discovery for `.agents/skills` locations. Pi now discovers project skills from `.agents/skills` in `cwd` and ancestor directories (up to git repo root, or filesystem root when not in a repo), and global skills from `~/.agents/skills`, in addition to existing `.pi` skill paths.
+
+## [0.53.1] - 2026-02-19
+
+### Changed
+
+- Added Gemini 3.1 model catalog entries for all built-in providers that currently expose it: `google`, `google-vertex`, `opencode`, `openrouter`, and `vercel-ai-gateway`.
+- Added Claude Opus 4.6 Thinking to the `google-antigravity` model catalog.
+
+## [0.53.0] - 2026-02-17
+
+### Breaking Changes
+
+- `SettingsManager` persistence semantics changed for SDK consumers. Setters now update in-memory state immediately and queue disk writes. Code that requires durable on-disk settings must call `await settingsManager.flush()`.
+- `AuthStorage` constructor is no longer public. Use static factories (`AuthStorage.create(...)`, `AuthStorage.fromStorage(...)`, `AuthStorage.inMemory(...)`). This breaks code that used `new AuthStorage(...)` directly.
+
+### Added
+
+- Added `SettingsManager.drainErrors()` for caller-controlled settings I/O error handling without manager-side console output.
+- Added auth storage backends (`FileAuthStorageBackend`, `InMemoryAuthStorageBackend`) and `AuthStorage.fromStorage(...)` for storage-first auth persistence wiring.
+- Added Anthropic `claude-sonnet-4-6` model fallback entry to generated model definitions.
+
+### Changed
+
+- `SettingsManager` now uses scoped storage abstraction with per-scope locked read/merge/write persistence for global and project settings.
+
+### Fixed
+
+- Fixed project settings persistence to preserve unrelated external edits via merge-on-write, while still applying in-memory changes for modified keys.
+- Fixed auth credential persistence to preserve unrelated external edits to `auth.json` via locked read/merge/write updates.
+- Fixed auth load/persist error surfacing by buffering errors and exposing them via `AuthStorage.drainErrors()`.
+
+## [0.52.12] - 2026-02-13
+
+### Added
+
+- Added `transport` setting (`"sse"`, `"websocket"`, `"auto"`) to `/settings` and `settings.json` for providers that support multiple transports (currently `openai-codex` via OpenAI Codex Responses).
+
+### Changed
+
+- Interactive mode now applies transport changes immediately to the active agent session.
+- Settings migration now maps legacy `websockets: boolean` to the new `transport` setting.
+
+## [0.52.11] - 2026-02-13
+
+### Added
+
+- Added MiniMax M2.5 model entries for `minimax`, `minimax-cn`, `openrouter`, and `vercel-ai-gateway` providers, plus `minimax-m2.5-free` for `opencode`.
+
+## [0.52.10] - 2026-02-12
+
+### New Features
+
+- Extension terminal input interception via `terminal_input`, allowing extensions to consume or transform raw input before normal TUI handling. See [docs/extensions.md](docs/extensions.md).
+- Expanded CLI model selection: `--model` now supports `provider/id`, fuzzy matching, and `:<thinking>` suffixes. See [README.md](README.md) and [docs/models.md](docs/models.md).
+- Safer package source handling with stricter git source parsing and improved local path normalization. See [docs/packages.md](docs/packages.md).
+- New built-in model definition `gpt-5.3-codex-spark` for OpenAI and OpenAI Codex providers.
+- Improved OpenAI stream robustness for malformed trailing tool-call JSON in partial chunks.
+- Added built-in GLM-5 model support via z.ai and OpenRouter provider catalogs.
+
+### Breaking Changes
+
+- `ContextUsage.tokens` and `ContextUsage.percent` are now `number | null`. After compaction, context token count is unknown until the next LLM response, so these fields return `null`. Extensions that read `ContextUsage` must handle the `null` case. Removed `usageTokens`, `trailingTokens`, and `lastUsageIndex` fields from `ContextUsage` (implementation details that should not have been public) ([#1382](https://github.com/badlogic/pi-mono/pull/1382) by [@ferologics](https://github.com/ferologics))
+- Git source parsing is now strict without `git:` prefix: only protocol URLs are treated as git (`https://`, `http://`, `ssh://`, `git://`). Shorthand sources like `github.com/org/repo` and `git@github.com:org/repo` now require the `git:` prefix. ([#1426](https://github.com/badlogic/pi-mono/issues/1426))
+
+### Added
+
+- Added extension event forwarding for message and tool execution lifecycles (`message_start`, `message_update`, `message_end`, `tool_execution_start`, `tool_execution_update`, `tool_execution_end`) ([#1375](https://github.com/badlogic/pi-mono/pull/1375) by [@sumeet](https://github.com/sumeet))
+- Added `terminal_input` extension event to intercept, consume, or transform raw terminal input before normal TUI handling.
+- Added `gpt-5.3-codex-spark` model definition for OpenAI and OpenAI Codex providers (research preview).
+
+### Changed
+
+- Routed GitHub Copilot Claude 4.x models through Anthropic Messages API, with updated Copilot header handling for Claude model requests.
+
+### Fixed
+
+- Fixed context usage percentage in footer showing stale pre-compaction values. After compaction the footer now shows `?/200k` until the next LLM response provides accurate usage ([#1382](https://github.com/badlogic/pi-mono/pull/1382) by [@ferologics](https://github.com/ferologics))
+- Fixed `_checkCompaction()` using the first compaction entry instead of the latest, which could cause incorrect overflow detection with multiple compactions ([#1382](https://github.com/badlogic/pi-mono/pull/1382) by [@ferologics](https://github.com/ferologics))
+- `--model` now works without `--provider`, supports `provider/id` syntax, fuzzy matching, and `:<thinking>` suffix (e.g., `--model sonnet:high`, `--model openai/gpt-4o`) ([#1350](https://github.com/badlogic/pi-mono/pull/1350) by [@mitsuhiko](https://github.com/mitsuhiko))
+- Fixed local package path normalization for extension sources while tightening git source parsing rules ([#1426](https://github.com/badlogic/pi-mono/issues/1426))
+- Fixed extension terminal input listeners not being cleared during session resets, which could leave stale handlers active.
+- Fixed Termux bootstrap package name for `fd` installation ([#1433](https://github.com/badlogic/pi-mono/pull/1433))
+- Fixed `@` file autocomplete fuzzy matching to prioritize path-prefix and segment matches for nested paths ([#1423](https://github.com/badlogic/pi-mono/issues/1423))
+- Fixed OpenAI streaming tool-call parsing to tolerate malformed trailing JSON in partial chunks ([#1424](https://github.com/badlogic/pi-mono/issues/1424))
+
 ## [0.52.9] - 2026-02-08
 
 ### New Features

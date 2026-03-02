@@ -170,6 +170,7 @@ const noOpUIContext: ExtensionUIContext = {
 	confirm: async () => false,
 	input: async () => undefined,
 	notify: () => {},
+	onTerminalInput: () => () => {},
 	setStatus: () => {},
 	setWorkingMessage: () => {},
 	setWidget: () => {},
@@ -258,11 +259,16 @@ export class ExtensionRunner {
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 
-		// Process provider registrations queued during extension loading
+		// Flush provider registrations queued during extension loading
 		for (const { name, config } of this.runtime.pendingProviderRegistrations) {
 			this.modelRegistry.registerProvider(name, config);
 		}
 		this.runtime.pendingProviderRegistrations = [];
+
+		// From this point on, provider registration/unregistration takes effect immediately
+		// without requiring a /reload.
+		this.runtime.registerProvider = (name, config) => this.modelRegistry.registerProvider(name, config);
+		this.runtime.unregisterProvider = (name) => this.modelRegistry.unregisterProvider(name);
 	}
 
 	bindCommandContext(actions?: ExtensionCommandContextActions): void {
@@ -300,15 +306,17 @@ export class ExtensionRunner {
 		return this.extensions.map((e) => e.path);
 	}
 
-	/** Get all registered tools from all extensions. */
+	/** Get all registered tools from all extensions (first registration per name wins). */
 	getAllRegisteredTools(): RegisteredTool[] {
-		const tools: RegisteredTool[] = [];
+		const toolsByName = new Map<string, RegisteredTool>();
 		for (const ext of this.extensions) {
 			for (const tool of ext.tools.values()) {
-				tools.push(tool);
+				if (!toolsByName.has(tool.definition.name)) {
+					toolsByName.set(tool.definition.name, tool);
+				}
 			}
 		}
-		return tools;
+		return Array.from(toolsByName.values());
 	}
 
 	/** Get a tool definition by name. Returns undefined if not found. */
@@ -326,7 +334,9 @@ export class ExtensionRunner {
 		const allFlags = new Map<string, ExtensionFlag>();
 		for (const ext of this.extensions) {
 			for (const [name, flag] of ext.flags) {
-				allFlags.set(name, flag);
+				if (!allFlags.has(name)) {
+					allFlags.set(name, flag);
+				}
 			}
 		}
 		return allFlags;
@@ -424,6 +434,7 @@ export class ExtensionRunner {
 		this.commandDiagnostics = [];
 
 		const commands: RegisteredCommand[] = [];
+		const commandOwners = new Map<string, string>();
 		for (const ext of this.extensions) {
 			for (const command of ext.commands.values()) {
 				if (reserved?.has(command.name)) {
@@ -435,6 +446,17 @@ export class ExtensionRunner {
 					continue;
 				}
 
+				const existingOwner = commandOwners.get(command.name);
+				if (existingOwner) {
+					const message = `Extension command '${command.name}' from ${ext.path} conflicts with ${existingOwner}. Skipping.`;
+					this.commandDiagnostics.push({ type: "warning", message, path: ext.path });
+					if (!this.hasUI()) {
+						console.warn(message);
+					}
+					continue;
+				}
+
+				commandOwners.set(command.name, ext.path);
 				commands.push(command);
 			}
 		}
