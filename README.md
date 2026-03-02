@@ -39,6 +39,51 @@ Tools for building AI agents and managing LLM deployments.
 | **[@mariozechner/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
 | **[@mariozechner/pi-pods](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
 
+## Autonomous Loop
+
+pi includes a hook-enforced workflow for autonomous agent execution:
+
+```
+PRD -> TDD (red/green/refactor) -> review_1 -> fix_findings -> review_2 -> ready_to_push -> done
+```
+
+### Workflow Commands
+
+- `/workflow status` - Show current phase, active task, and blockers
+- `/workflow advance [phase]` - Manually advance to next phase
+- `/workflow reset` - Reset workflow state
+- `/workflow findings` - List open findings and linked fix tasks
+- `/workflow load <path-to-prd.md>` - Load a PRD file
+
+### Single-Turn Autonomy
+
+- If a prompt includes a `.md` path, the extension loads that PRD automatically
+- If no PRD path is provided, the extension auto-generates a PRD/TDD board from the prompt
+- After loading, the workflow auto-advances from `prd_loaded` to `tdd_red` in the same turn
+
+### Review/Fix Protocol
+
+In `review_1`, output findings as:
+```
+FINDING|severity|file1,file2|summary
+```
+
+In `fix_findings`, close findings as:
+```
+FIXED|finding-id|evidence
+```
+
+In `review_2`, output:
+```
+REVIEW2|PASS
+```
+
+### Key Gates
+
+- `git push` blocked unless phase is `ready_to_push` (or `done`)
+- Read-only phases block `write/edit` and mutating bash commands
+- Task completion requires red + green + refactor + check evidence
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).
