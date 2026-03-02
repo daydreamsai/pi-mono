@@ -4,10 +4,14 @@ import { getModel } from "../src/models.js";
 import { streamSimple } from "../src/stream.js";
 import type { Tool } from "../src/types.js";
 
-const mockState = vi.hoisted(() => ({ lastParams: undefined as unknown }));
+const mockState = vi.hoisted(() => ({ lastClientOptions: undefined as unknown, lastParams: undefined as unknown }));
 
 vi.mock("openai", () => {
 	class FakeOpenAI {
+		constructor(options: unknown) {
+			mockState.lastClientOptions = options;
+		}
+
 		chat = {
 			completions: {
 				create: async (params: unknown) => {
@@ -34,6 +38,32 @@ vi.mock("openai", () => {
 });
 
 describe("openai-completions tool_choice", () => {
+	it("forwards custom fetch from simple options to OpenAI client", async () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const customFetch = vi.fn(async () => new Response("{}", { status: 200 }));
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Hello",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{
+				apiKey: "test",
+				fetch: customFetch,
+			} as unknown as Parameters<typeof streamSimple>[2],
+		).result();
+
+		const clientOptions = mockState.lastClientOptions as { fetch?: unknown };
+		expect(clientOptions.fetch).toBe(customFetch);
+	});
+
 	it("forwards toolChoice from simple options to payload", async () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
 		const model = { ...baseModel, api: "openai-completions" } as const;

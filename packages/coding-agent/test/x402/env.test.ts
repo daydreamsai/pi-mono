@@ -22,6 +22,12 @@ describe("x402 env", () => {
 		expect(() => loadX402Env({})).toThrow("X402_PRIVATE_KEY is required");
 	});
 
+	test("allows missing private key when explicitly optional", () => {
+		const config = loadX402Env({}, { requirePrivateKey: false });
+		expect(config.privateKey).toBeUndefined();
+		expect(config.routerUrl).toBe("http://localhost:8080");
+	});
+
 	test("throws when private key format is invalid", () => {
 		expect(() =>
 			loadX402Env({

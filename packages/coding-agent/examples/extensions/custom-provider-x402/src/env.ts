@@ -11,6 +11,9 @@ const DEFAULT_MODEL_ID = "kimi-k2.5";
 const DEFAULT_MODEL_NAME = "Kimi K2.5";
 
 export type EnvSource = Record<string, string | undefined>;
+export interface LoadX402EnvOptions {
+	requirePrivateKey?: boolean;
+}
 
 function readTrimmed(env: EnvSource, key: string): string | undefined {
 	const value = env[key];
@@ -43,9 +46,10 @@ function normalizePermitCap(permitCap: string): string {
 	return permitCap;
 }
 
-export function loadX402Env(env: EnvSource = process.env): X402EnvConfig {
+export function loadX402Env(env: EnvSource = process.env, options: LoadX402EnvOptions = {}): X402EnvConfig {
+	const requirePrivateKey = options.requirePrivateKey ?? true;
 	const privateKeyRaw = readTrimmed(env, "X402_PRIVATE_KEY");
-	if (!privateKeyRaw) {
+	if (!privateKeyRaw && requirePrivateKey) {
 		throw new Error("X402_PRIVATE_KEY is required");
 	}
 
@@ -57,7 +61,7 @@ export function loadX402Env(env: EnvSource = process.env): X402EnvConfig {
 	const modelName = readTrimmed(env, "X402_MODEL_NAME") ?? DEFAULT_MODEL_NAME;
 
 	return {
-		privateKey: normalizePrivateKey(privateKeyRaw),
+		privateKey: privateKeyRaw ? normalizePrivateKey(privateKeyRaw) : undefined,
 		routerUrl: normalizeRouterUrl(routerUrlRaw),
 		network,
 		permitCap: normalizePermitCap(permitCapRaw),

@@ -34,6 +34,25 @@ describe("x402 fetch wrapper", () => {
 		expect(signer).not.toHaveBeenCalled();
 	});
 
+	test("skips payment header for /v1/models", async () => {
+		const baseFetch = vi.fn(async () => new Response("{}", { status: 200 }));
+		const signer = vi.fn();
+		const wrappedFetch = createX402Fetch({
+			baseFetch,
+			resolveRouterConfig: async () => ROUTER_CONFIG,
+			permitCache: new PermitCache(() => 0),
+			permitCap: "10000000",
+			privateKey: `0x${"1".repeat(64)}`,
+			routerUrl: "http://localhost:8080",
+			signer,
+		});
+
+		await wrappedFetch("http://localhost:8080/v1/models");
+
+		expect(baseFetch).toHaveBeenCalledTimes(1);
+		expect(signer).not.toHaveBeenCalled();
+	});
+
 	test("injects payment header for inference requests", async () => {
 		const baseFetch = vi.fn(async (_input: unknown, init?: RequestInit) => {
 			const headers = new Headers(init?.headers);
@@ -129,5 +148,80 @@ describe("x402 fetch wrapper", () => {
 		expect(baseFetch).toHaveBeenCalledTimes(2);
 		expect(signer).toHaveBeenCalledTimes(2);
 		expect(seenHeaders).toEqual(["sig-10000000", "sig-20000000"]);
+	});
+
+	test("does not retry for unrelated 402 errors", async () => {
+		const baseFetch = vi.fn(async () => {
+			return new Response(JSON.stringify({ error: { code: "rate_limit", message: "too many requests" } }), {
+				status: 402,
+				headers: {
+					"content-type": "application/json",
+				},
+			});
+		});
+
+		const signer = vi.fn(async () => ({
+			paymentSig: "sig-1",
+			deadline: 99999,
+			maxValue: "10000000",
+			nonce: "1",
+			network: ROUTER_CONFIG.network,
+			asset: ROUTER_CONFIG.asset,
+			payTo: ROUTER_CONFIG.payTo,
+		}));
+
+		const wrappedFetch = createX402Fetch({
+			baseFetch,
+			resolveRouterConfig: async () => ROUTER_CONFIG,
+			permitCache: new PermitCache(() => 0),
+			permitCap: "10000000",
+			privateKey: `0x${"1".repeat(64)}`,
+			routerUrl: "http://localhost:8080",
+			signer,
+		});
+
+		const response = await wrappedFetch("http://localhost:8080/v1/chat/completions", {
+			method: "POST",
+			body: "{}",
+		});
+
+		expect(response.status).toBe(402);
+		expect(baseFetch).toHaveBeenCalledTimes(1);
+		expect(signer).toHaveBeenCalledTimes(1);
+	});
+
+	test("propagates abort signal to wrapped fetch", async () => {
+		const seenSignals: Array<AbortSignal | null | undefined> = [];
+		const baseFetch = vi.fn(async (_input: unknown, init?: RequestInit) => {
+			seenSignals.push(init?.signal);
+			return new Response("{}", { status: 200 });
+		});
+		const signer = vi.fn(async () => ({
+			paymentSig: "sig-1",
+			deadline: 99999,
+			maxValue: "10000000",
+			nonce: "1",
+			network: ROUTER_CONFIG.network,
+			asset: ROUTER_CONFIG.asset,
+			payTo: ROUTER_CONFIG.payTo,
+		}));
+		const wrappedFetch = createX402Fetch({
+			baseFetch,
+			resolveRouterConfig: async () => ROUTER_CONFIG,
+			permitCache: new PermitCache(() => 0),
+			permitCap: "10000000",
+			privateKey: `0x${"1".repeat(64)}`,
+			routerUrl: "http://localhost:8080",
+			signer,
+		});
+
+		const controller = new AbortController();
+		await wrappedFetch("http://localhost:8080/v1/chat/completions", {
+			method: "POST",
+			body: "{}",
+			signal: controller.signal,
+		});
+
+		expect(seenSignals).toContain(controller.signal);
 	});
 });

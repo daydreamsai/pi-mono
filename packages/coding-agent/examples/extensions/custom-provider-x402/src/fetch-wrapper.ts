@@ -9,7 +9,7 @@ import type { CachedPermit, RouterConfig, SignPermit } from "./types.js";
 
 interface X402FetchOptions {
 	baseFetch?: typeof fetch;
-	resolveRouterConfig: () => Promise<RouterConfig>;
+	resolveRouterConfig: (signal?: AbortSignal) => Promise<RouterConfig>;
 	permitCache: PermitCache;
 	permitCap: string;
 	privateKey: string;
@@ -82,7 +82,7 @@ export function createX402Fetch(options: X402FetchOptions): typeof fetch {
 			return baseFetch(input, init);
 		}
 
-		const initialRouterConfig = await options.resolveRouterConfig();
+		const initialRouterConfig = await options.resolveRouterConfig(init?.signal ?? undefined);
 		const sendWithPermit = async (routerConfig: RouterConfig, permitCap: string): Promise<Response> => {
 			const cached = options.permitCache.get(
 				routerConfig.network,

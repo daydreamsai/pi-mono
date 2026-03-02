@@ -1,5 +1,5 @@
 export interface X402EnvConfig {
-	privateKey: string;
+	privateKey?: string;
 	routerUrl: string;
 	network: string;
 	permitCap: string;
